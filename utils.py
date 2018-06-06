@@ -145,6 +145,7 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
 
     return carea / uarea
 
+
 def bbox_ious(boxes1, boxes2, x1y1x2y2=True):
     if x1y1x2y2:
         mx = torch.min(boxes1[0], boxes2[0])
@@ -366,13 +367,6 @@ def load_conv_bn(buf, start, conv_model, bn_model):
                                                 conv_model.weight.shape[3]))); start = start + num_w
     return start
 
-
-def load_fc(buf, start, fc_model):
-    num_w = fc_model.weight.numel()
-    num_b = fc_model.bias.numel()
-    fc_model.bias.data.copy_(torch.from_numpy(buf[start:start+num_b]));     start = start + num_b
-    fc_model.weight.data.copy_(torch.from_numpy(buf[start:start+num_w]));   start = start + num_w
-    return start
 
 
 def convert2cpu(gpu_matrix):

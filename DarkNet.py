@@ -3,7 +3,6 @@ from __future__ import division
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from region_loss import RegionLoss
 from utils import *
 import time
 from torch.autograd import Variable
@@ -22,6 +21,7 @@ class Upsample(nn.Module):
     def __init__(self, stride=2):
         super(Upsample, self).__init__()
         self.stride = stride
+
     def forward(self, x):
         stride = self.stride
         assert(x.data.dim() == 4)
@@ -31,44 +31,7 @@ class Upsample(nn.Module):
         W = x.data.size(3)
         ws = stride
         hs = stride
-        x = x.view(B, C, H, 1, W, 1).expand(B, C, H, stride, W, stride).contiguous().view(B, C, H*stride, W*stride)
-        return x
-
-
-class GlobalAvgPool2d(nn.Module):
-    def __init__(self):
-        super(GlobalAvgPool2d, self).__init__()
-
-    def forward(self, x):
-        N = x.data.size(0)
-        C = x.data.size(1)
-        H = x.data.size(2)
-        W = x.data.size(3)
-        x = F.avg_pool2d(x, (H, W))
-        x = x.view(N, C)
-        return x
-
-
-class Reorg(nn.Module):
-    def __init__(self, stride=2):
-        super(Reorg, self).__init__()
-        self.stride = stride
-
-    def forward(self, x):
-        stride = self.stride
-        assert(x.data.dim() == 4)
-        B = x.data.size(0)
-        C = x.data.size(1)
-        H = x.data.size(2)
-        W = x.data.size(3)
-        assert(H % stride == 0)
-        assert(W % stride == 0)
-        ws = stride
-        hs = stride
-        x = x.view(B, C, H/hs, hs, W/ws, ws).transpose(3,4).contiguous()
-        x = x.view(B, C, H/hs*W/ws, hs*ws).transpose(2,3).contiguous()
-        x = x.view(B, C, hs*ws, H/hs, W/ws).transpose(1,2).contiguous()
-        x = x.view(B, hs*ws*C, H/hs, W/ws)
+        x = x.view(B, C, H, 1, W, 1).expand(B, C, H, stride, W, stride).contiguous().view(B, C, H*hs, W*ws)
         return x
 
 
@@ -96,7 +59,6 @@ class Darknet(nn.Module):
             self.num_anchors = self.loss.num_anchors
             self.anchor_step = self.lss.anchor_step
             self.num_classes = self.loss.num_classes
-
 
         self.header = torch.IntTensor([0, 0, 0, 0])
         self.seen = 0
@@ -139,13 +101,6 @@ class Darknet(nn.Module):
                 elif activation == 'relu':
                     x = F.relu(x, inplace=True)
                 outputs[ind] = x
-            elif block['type'] == 'region':
-                continue
-                if self.loss:
-                    self.loss = self.loss + self.models[ind](x)
-                else:
-                    self.loss = self.models[ind](x)
-                outputs[ind] = None
             elif block['type'] == 'yolo':
                 if self.training:
                     pass
@@ -157,7 +112,7 @@ class Darknet(nn.Module):
             else:
                 print('unknown type %s' % (block['type']))
         if self.training:
-            return loss
+            return self.loss
         else:
             return out_boxes
 
@@ -214,32 +169,11 @@ class Darknet(nn.Module):
                 prev_stride = stride * prev_stride
                 out_strides.append(prev_stride)
                 models.append(model)
-            elif block['type'] == 'avgpool':
-                model = GlobalAvgPool2d()
-                out_filters.append(prev_filters)
-                models.append(model)
             elif block['type'] == 'softmax':
                 model = nn.Softmax()
                 out_strides.append(prev_stride)
                 out_filters.append(prev_filters)
                 models.append(model)
-            elif block['type'] == 'cost':
-                if block['_type'] == 'sse':
-                    model = nn.MSELoss(size_average=True)
-                elif block['_type'] == 'L1':
-                    model = nn.L1Loss(size_average=True)
-                elif block['_type'] == 'smooth':
-                    model = nn.SmoothL1Loss(size_average=True)
-                out_filters.append(1)
-                out_strides.append(prev_stride)
-                models.append(model)
-            elif block['type'] == 'reorg':
-                stride = int(block['stride'])
-                prev_filters = stride * stride * prev_filters
-                out_filters.append(prev_filters)
-                prev_stride = prev_stride * stride
-                out_strides.append(prev_stride)
-                models.append(Reorg(stride))
             elif block['type'] == 'upsample':
                 stride = int(block['stride'])
                 out_filters.append(prev_filters)
@@ -268,36 +202,6 @@ class Darknet(nn.Module):
                 prev_stride = out_strides[ind - 1]
                 out_strides.append(prev_stride)
                 models.append(EmptyModule())
-            elif block['type'] == 'connected':
-                filters = int(block['output'])
-                if block['activation'] == 'linear':
-                    model = nn.Linear(prev_filters, filters)
-                elif block['activation'] == 'leaky':
-                    model = nn.Sequential(
-                        nn.Linear(prev_filters, filters),
-                        nn.LeakyReLU(0.1, inplace=True))
-                elif block['activation'] == 'relu':
-                    model = nn.Sequential(
-                        nn.Linear(prev_filters, filters),
-                        nn.ReLU(inplace=True))
-                prev_filters = filters
-                out_filters.append(prev_filters)
-                out_strides.append(prev_stride)
-                models.append(model)
-            elif block['type'] == 'region':
-                loss = RegionLoss()
-                anchors = block['anchors'].split(',')
-                loss.anchors = [float(i) for i in anchors]
-                loss.num_classes = int(block['classes'])
-                loss.num_anchors = int(block['num'])
-                loss.anchor_step = len(loss.anchors) / loss.num_anchors
-                loss.object_scale = float(block['object_scale'])
-                loss.noobject_scale = float(block['noobject_scale'])
-                loss.class_scale = float(block['class_scale'])
-                loss.coord_scale = float(block['coord_scale'])
-                out_filters.append(prev_filters)
-                out_strides.append(prev_stride)
-                models.append(loss)
             elif block['type'] == 'yolo':
                 yolo_layer = YoloLayer()
                 anchors = block['anchors'].split(',')
@@ -343,15 +247,7 @@ class Darknet(nn.Module):
                     start = load_conv_bn(buf, start, model[0], model[1])
                 else:
                     start = load_conv(buf, start, model[0])
-            elif block['type'] == 'connected':
-                model = self.models[ind]
-                if block['activation'] != 'linear':
-                    start = load_fc(buf, start, model[0])
-                else:
-                    start = load_fc(buf, start, model)
             elif block['type'] == 'maxpool':
-                pass
-            elif block['type'] == 'reorg':
                 pass
             elif block['type'] == 'upsample':
                 pass
@@ -362,8 +258,6 @@ class Darknet(nn.Module):
             elif block['type'] == 'region':
                 pass
             elif block['type'] == 'yolo':
-                pass
-            elif block['type'] == 'avgpool':
                 pass
             elif block['type'] == 'softmax':
                 pass

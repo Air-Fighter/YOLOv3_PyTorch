@@ -4,8 +4,6 @@ import torch
 from torch.autograd import Variable
 from PIL import Image
 from DarkNet import Darknet
-import time
-import math
 from utils import *
 
 
