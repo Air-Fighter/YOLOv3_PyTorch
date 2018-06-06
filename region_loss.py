@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from utils import *
 
+
 def build_targets(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW, noobject_scale, object_scale, sil_thresh, seen):
     nB = target.size(0)
     nA = num_anchors
@@ -96,6 +97,7 @@ def build_targets(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW,
                 nCorrect = nCorrect + 1
 
     return nGT, nCorrect, coord_mask, conf_mask, cls_mask, tx, ty, tw, th, tconf, tcls
+
 
 class RegionLoss(nn.Module):
     def __init__(self, num_classes=0, anchors=[], num_anchors=1):
