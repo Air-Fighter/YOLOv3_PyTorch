@@ -24,14 +24,14 @@ class Upsample(nn.Module):
 
     def forward(self, x):
         stride = self.stride
-        assert(x.data.dim() == 4)
+        assert (x.data.dim() == 4)
         B = x.data.size(0)
         C = x.data.size(1)
         H = x.data.size(2)
         W = x.data.size(3)
         ws = stride
         hs = stride
-        x = x.view(B, C, H, 1, W, 1).expand(B, C, H, stride, W, stride).contiguous().view(B, C, H*hs, W*ws)
+        x = x.view(B, C, H, 1, W, 1).expand(B, C, H, stride, W, stride).contiguous().view(B, C, H * hs, W * ws)
         return x
 
 
@@ -48,7 +48,7 @@ class Darknet(nn.Module):
     def __init__(self, cfgfile):
         super(Darknet, self).__init__()
         self.blocks = parse_cfg(cfgfile)
-        self.models = self.create_network(self.blocks)
+        self.info, self.models = self.create_network(self.blocks)
         self.loss = self.models[len(self.models) - 1]
 
         self.width = int(self.blocks[0]['width'])
@@ -62,10 +62,9 @@ class Darknet(nn.Module):
         self.loss = None
         outputs = dict()
         out_boxes = []
+
         for block in self.blocks:
             ind = ind + 1
-            # if ind > 0:
-            #    return x
 
             if block['type'] == 'net':
                 continue
@@ -114,6 +113,7 @@ class Darknet(nn.Module):
         print_cfg(self.blocks)
 
     def create_network(self, blocks):
+        net_info = blocks[0]
         models = nn.ModuleList()
 
         prev_filters = 3
@@ -206,17 +206,13 @@ class Darknet(nn.Module):
                 yolo_layer.num_anchors = int(block['num'])
                 yolo_layer.anchor_step = int(len(yolo_layer.anchors) / yolo_layer.num_anchors)
                 yolo_layer.stride = prev_stride
-                # yolo_layer.object_scale = float(block['object_scale'])
-                # yolo_layer.noobject_scale = float(block['noobject_scale'])
-                # yolo_layer.class_scale = float(block['class_scale'])
-                # yolo_layer.coord_scale = float(block['coord_scale'])
                 out_filters.append(prev_filters)
                 out_strides.append(prev_stride)
                 models.append(yolo_layer)
             else:
                 print('unknown type %s' % (block['type']))
 
-        return models
+        return net_info, models
 
     def load_weights(self, weightfile):
         fp = open(weightfile, 'rb')
@@ -261,73 +257,75 @@ class Darknet(nn.Module):
                 print('unknown type %s' % (block['type']))
 
 
-def build_targets(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW, noobject_scale, object_scale, sil_thresh, seen):
+def build_targets(pred_boxes, target, anchors, num_anchors, nH, nW, noobject_scale, object_scale,
+                  sil_thresh, seen):
     nB = target.size(0)
     nA = num_anchors
-    nC = num_classes
-    anchor_step = len(anchors)/num_anchors
-    conf_mask  = torch.ones(nB, nA, nH, nW) * noobject_scale
+    anchor_step = len(anchors) / num_anchors
+    conf_mask = torch.ones(nB, nA, nH, nW) * noobject_scale
     coord_mask = torch.zeros(nB, nA, nH, nW)
-    cls_mask   = torch.zeros(nB, nA, nH, nW)
-    tx         = torch.zeros(nB, nA, nH, nW)
-    ty         = torch.zeros(nB, nA, nH, nW)
-    tw         = torch.zeros(nB, nA, nH, nW)
-    th         = torch.zeros(nB, nA, nH, nW)
-    tconf      = torch.zeros(nB, nA, nH, nW)
-    tcls       = torch.zeros(nB, nA, nH, nW)
+    cls_mask = torch.zeros(nB, nA, nH, nW)
+    tx = torch.zeros(nB, nA, nH, nW)
+    ty = torch.zeros(nB, nA, nH, nW)
+    tw = torch.zeros(nB, nA, nH, nW)
+    th = torch.zeros(nB, nA, nH, nW)
+    tconf = torch.zeros(nB, nA, nH, nW)
+    tcls = torch.zeros(nB, nA, nH, nW)
 
-    nAnchors = nA*nH*nW
-    nPixels  = nH*nW
+    nAnchors = nA * nH * nW
+    nPixels = nH * nW
     for b in range(nB):
-        cur_pred_boxes = pred_boxes[b*nAnchors:(b+1)*nAnchors].t()
+        cur_pred_boxes = pred_boxes[b * nAnchors:(b + 1) * nAnchors].t()
         cur_ious = torch.zeros(nAnchors)
         for t in range(50):
-            if target[b][t*5+1] == 0:
+            if target[b][t * 5 + 1] == 0:
                 break
-            gx = target[b][t*5+1]*nW
-            gy = target[b][t*5+2]*nH
-            gw = target[b][t*5+3]*nW
-            gh = target[b][t*5+4]*nH
-            cur_gt_boxes = torch.FloatTensor([gx,gy,gw,gh]).repeat(nAnchors,1).t()
+            gx = target[b][t * 5 + 1] * nW
+            gy = target[b][t * 5 + 2] * nH
+            gw = target[b][t * 5 + 3] * nW
+            gh = target[b][t * 5 + 4] * nH
+            cur_gt_boxes = torch.FloatTensor([gx, gy, gw, gh]).repeat(nAnchors, 1).t()
             cur_ious = torch.max(cur_ious, bbox_ious(cur_pred_boxes, cur_gt_boxes, x1y1x2y2=False))
-        conf_mask[b][cur_ious>sil_thresh] = 0
+        conf_mask[b][cur_ious > sil_thresh] = 0
     if seen < 12800:
-       if anchor_step == 4:
-           tx = torch.FloatTensor(anchors).view(nA, anchor_step).index_select(1, torch.LongTensor([2])).view(1,nA,1,1).repeat(nB,1,nH,nW)
-           ty = torch.FloatTensor(anchors).view(num_anchors, anchor_step).index_select(1, torch.LongTensor([2])).view(1,nA,1,1).repeat(nB,1,nH,nW)
-       else:
-           tx.fill_(0.5)
-           ty.fill_(0.5)
-       tw.zero_()
-       th.zero_()
-       coord_mask.fill_(1)
+        if anchor_step == 4:
+            tx = torch.FloatTensor(anchors).view(nA, anchor_step).index_select(1, \
+                            torch.LongTensor([2])).view(1, nA, 1, 1).repeat(nB, 1, nH, nW)
+            ty = torch.FloatTensor(anchors).view(num_anchors, anchor_step).index_select(1, \
+                            torch.LongTensor([2])).view(1, nA, 1, 1).repeat(nB, 1, nH, nW)
+        else:
+            tx.fill_(0.5)
+            ty.fill_(0.5)
+        tw.zero_()
+        th.zero_()
+        coord_mask.fill_(1)
 
     nGT = 0
     nCorrect = 0
     for b in range(nB):
         for t in range(50):
-            if target[b][t*5+1] == 0:
+            if target[b][t * 5 + 1] == 0:
                 break
             nGT = nGT + 1
             best_iou = 0.0
             best_n = -1
             min_dist = 10000
-            gx = target[b][t*5+1] * nW
-            gy = target[b][t*5+2] * nH
+            gx = target[b][t * 5 + 1] * nW
+            gy = target[b][t * 5 + 2] * nH
             gi = int(gx)
             gj = int(gy)
-            gw = target[b][t*5+3]*nW
-            gh = target[b][t*5+4]*nH
+            gw = target[b][t * 5 + 3] * nW
+            gh = target[b][t * 5 + 4] * nH
             gt_box = [0, 0, gw, gh]
             for n in range(nA):
-                aw = anchors[anchor_step*n]
-                ah = anchors[anchor_step*n+1]
+                aw = anchors[anchor_step * n]
+                ah = anchors[anchor_step * n + 1]
                 anchor_box = [0, 0, aw, ah]
-                iou  = bbox_iou(anchor_box, gt_box, x1y1x2y2=False)
+                iou = bbox_iou(anchor_box, gt_box, x1y1x2y2=False)
                 if anchor_step == 4:
-                    ax = anchors[anchor_step*n+2]
-                    ay = anchors[anchor_step*n+3]
-                    dist = pow(((gi+ax) - gx), 2) + pow(((gj+ay) - gy), 2)
+                    ax = anchors[anchor_step * n + 2]
+                    ay = anchors[anchor_step * n + 3]
+                    dist = pow(((gi + ax) - gx), 2) + pow(((gj + ay) - gy), 2)
                 if iou > best_iou:
                     best_iou = iou
                     best_n = n
@@ -337,23 +335,22 @@ def build_targets(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW,
                     min_dist = dist
 
             gt_box = [gx, gy, gw, gh]
-            pred_box = pred_boxes[b*nAnchors+best_n*nPixels+gj*nW+gi]
+            pred_box = pred_boxes[b * nAnchors + best_n * nPixels + gj * nW + gi]
 
             coord_mask[b][best_n][gj][gi] = 1
             cls_mask[b][best_n][gj][gi] = 1
             conf_mask[b][best_n][gj][gi] = object_scale
-            tx[b][best_n][gj][gi] = target[b][t*5+1] * nW - gi
-            ty[b][best_n][gj][gi] = target[b][t*5+2] * nH - gj
-            tw[b][best_n][gj][gi] = math.log(gw/anchors[anchor_step*best_n])
-            th[b][best_n][gj][gi] = math.log(gh/anchors[anchor_step*best_n+1])
-            iou = bbox_iou(gt_box, pred_box, x1y1x2y2=False) # best_iou
+            tx[b][best_n][gj][gi] = target[b][t * 5 + 1] * nW - gi
+            ty[b][best_n][gj][gi] = target[b][t * 5 + 2] * nH - gj
+            tw[b][best_n][gj][gi] = math.log(gw / anchors[anchor_step * best_n])
+            th[b][best_n][gj][gi] = math.log(gh / anchors[anchor_step * best_n + 1])
+            iou = bbox_iou(gt_box, pred_box, x1y1x2y2=False)  # best_iou
             tconf[b][best_n][gj][gi] = iou
-            tcls[b][best_n][gj][gi] = target[b][t*5]
+            tcls[b][best_n][gj][gi] = target[b][t * 5]
             if iou > 0.5:
                 nCorrect = nCorrect + 1
 
     return nGT, nCorrect, coord_mask, conf_mask, cls_mask, tx, ty, tw, th, tconf, tcls
-
 
 
 class YoloLayer(nn.Module):
@@ -451,8 +448,8 @@ class YoloLayer(nn.Module):
                 print('       create loss : %f' % (t4 - t3))
                 print('             total : %f' % (t4 - t0))
             print('%d: nGT %d, recall %d, proposals %d, loss: x %f, y %f, w %f, h %f, conf %f, cls %f, total %f' % (
-            self.seen, nGT, nCorrect, nProposals, loss_x.data[0], loss_y.data[0], loss_w.data[0], loss_h.data[0],
-            loss_conf.data[0], loss_cls.data[0], loss.data[0]))
+                self.seen, nGT, nCorrect, nProposals, loss_x.data[0], loss_y.data[0], loss_w.data[0], loss_h.data[0],
+                loss_conf.data[0], loss_cls.data[0], loss.data[0]))
             return loss
         else:
             masked_anchors = []
