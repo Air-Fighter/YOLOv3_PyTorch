@@ -1,7 +1,5 @@
 from __future__ import division
 
-import torch
-from torch.autograd import Variable
 from PIL import Image
 from DarkNet import Darknet
 from utils import *
@@ -9,7 +7,7 @@ from utils import *
 
 def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=False):
     model.eval()
-    t0 = time.time()
+
     if isinstance(img, Image.Image):
         width = img.width
         height = img.height
@@ -21,20 +19,15 @@ def do_detect(model, img, conf_thresh, nms_thresh, use_cuda=False):
         print('unknown image type')
         exit(-1)
 
-    t1 = time.time()
-
     if use_cuda:
         img = img.cuda()
     img = Variable(img)
-    t2 = time.time()
 
     list_boxes = model(img)
     # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     boxes = list_boxes[0][0] + list_boxes[1][0] + list_boxes[2][0]
-    t3 = time.time()
 
     boxes = nms(boxes, nms_thresh)
-    t4 = time.time()
 
     return boxes
 

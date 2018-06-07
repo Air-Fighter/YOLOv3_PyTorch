@@ -54,12 +54,6 @@ class Darknet(nn.Module):
         self.width = int(self.blocks[0]['width'])
         self.height = int(self.blocks[0]['height'])
 
-        if self.blocks[len(self.blocks) - 1]['type'] == 'region':
-            self.anchors = self.loss.anchors
-            self.num_anchors = self.loss.num_anchors
-            self.anchor_step = self.lss.anchor_step
-            self.num_classes = self.loss.num_classes
-
         self.header = torch.IntTensor([0, 0, 0, 0])
         self.seen = 0
 
@@ -337,7 +331,7 @@ def build_targets(pred_boxes, target, anchors, num_anchors, num_classes, nH, nW,
                 if iou > best_iou:
                     best_iou = iou
                     best_n = n
-                elif anchor_step==4 and iou == best_iou and dist < min_dist:
+                elif anchor_step == 4 and iou == best_iou and dist < min_dist:
                     best_iou = iou
                     best_n = n
                     min_dist = dist

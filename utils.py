@@ -68,7 +68,7 @@ def plot_boxes(img, boxes, save_name=None, class_names=None):
 
         rgb = (255, 0, 0)
 
-        if len(box) >= 7 and class_names:
+        if len(box) == 7 and class_names:
             cls_conf = box[5]
             cls_id = box[6]
             print('%s: %f' % (class_names[cls_id], cls_conf))
